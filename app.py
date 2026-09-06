@@ -200,7 +200,7 @@ with st.sidebar:
             ["ARIMA", "VAR", "VECM", "GARCH", "XGBoost"],
             default=["ARIMA", "VAR", "VECM"],
         )
-        forecast_horizon = st.number_input("Forecast horizon (years)", min_value=1, max_value=5, value=5, step=1)
+        forecast_horizon = st.number_input("Forecast horizon (years)", min_value=5, max_value=5, value=5, step=1)
         test_fraction = st.slider("Backtest share", 0.1, 0.4, 0.2, 0.05)
         run_comparison = st.form_submit_button("Run comparison", type="primary", use_container_width=True)
 
@@ -278,7 +278,7 @@ best.insert(0, "Target", best.index)
 st.subheader("Best forecasting method")
 st.dataframe(best.reset_index(drop=True), hide_index=True, use_container_width=True)
 
-forecast_years = list(range(2027, 2027 + int(forecast_horizon)))
+forecast_years = list(range(2026, 2026 + int(forecast_horizon)))
 forecast_index = pd.to_datetime([f"{year}-12-31" for year in forecast_years])
 future_base = pd.DataFrame([data.loc[data.index.year == 2027].iloc[-1].to_dict()] * len(forecast_years), index=forecast_index).reindex(columns=data.columns)
 future_frame = pd.concat([future_base, equation_features(future_base, resolved)], axis=1)
