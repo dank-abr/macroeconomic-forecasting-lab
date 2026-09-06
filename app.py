@@ -174,6 +174,20 @@ def run_method(method, frame, train, targets, exogenous, equations, steps):
 
 st.set_page_config(page_title="Macroeconomic Forecasting Lab", layout="wide")
 
+LOGO_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQijYmtsZ08pz2QlwW-ITX0VwtcKr_OoscYeQhZ8eIcqqHBKMIPNKldBdgG&s=10"
+
+
+def render_app_title():
+    st.markdown(
+        f"""
+        <div style="display: flex; align-items: center; gap: 1rem; margin: 0.5rem 0 1rem;">
+            <h2 style="font-size: 3.5rem; line-height: 1.1; margin: 0;">Macroeconomic Forecasting Lab</h2>
+            <img src="{LOGO_URL}" alt="App logo" style="width: 180px; height: 180px; object-fit: contain;">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def require_password():
     configured_password = st.secrets.get("APP_PASSWORD")
@@ -182,7 +196,7 @@ def require_password():
         st.stop()
     if st.session_state.get("authenticated"):
         return
-    st.title("Macroeconomic Forecasting Lab")
+    render_app_title()
     with st.form("login_form"):
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Sign in", type="primary")
@@ -195,7 +209,7 @@ def require_password():
 
 
 require_password()
-st.title("Macroeconomic Forecasting Lab")
+render_app_title()
 st.caption("Equation-informed comparison of ARIMA, VECM, VAR, GARCH and XGBoost")
 
 csv_path = Path(__file__).with_name("R1_model.csv")
