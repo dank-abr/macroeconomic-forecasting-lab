@@ -1,4 +1,5 @@
 import warnings
+import hmac
 from pathlib import Path
 
 import numpy as np
@@ -172,6 +173,28 @@ def run_method(method, frame, train, targets, exogenous, equations, steps):
 
 
 st.set_page_config(page_title="Macroeconomic Forecasting Lab", layout="wide")
+
+
+def require_password():
+    configured_password = st.secrets.get("APP_PASSWORD")
+    if not configured_password:
+        st.error("APP_PASSWORD is not configured in Streamlit Secrets.")
+        st.stop()
+    if st.session_state.get("authenticated"):
+        return
+    st.title("Macroeconomic Forecasting Lab")
+    with st.form("login_form"):
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign in", type="primary")
+    if submitted:
+        if hmac.compare_digest(password, str(configured_password)):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        st.error("Incorrect password.")
+    st.stop()
+
+
+require_password()
 st.title("Macroeconomic Forecasting Lab")
 st.caption("Equation-informed comparison of ARIMA, VECM, VAR, GARCH and XGBoost")
 
