@@ -1,3 +1,4 @@
+import ast
 import warnings
 import hmac
 from pathlib import Path
@@ -73,10 +74,33 @@ def safe_log(series):
     return np.log(series.where(series > 0))
 
 
-def equation_features(frame, columns):
+def filter_multicollinear_variables(frame, variables, threshold=0.95):
+    ordered = []
+    for variable in variables:
+        if variable not in frame.columns:
+            continue
+        if not ordered:
+            ordered.append(variable)
+            continue
+        correlations = []
+        for existing in ordered:
+            corr = frame[[variable, existing]].corr().iloc[0, 1]
+            correlations.append(abs(float(corr)) if pd.notna(corr) else 0.0)
+        if max(correlations, default=0.0) < threshold:
+            ordered.append(variable)
+    return ordered
+
+
+def equation_features(frame, columns, keep_variables=None):
+    keep_set = set(keep_variables) if keep_variables is not None else None
+
     def column(name):
         source = columns.get(name)
-        return frame[source] if source else pd.Series(np.nan, index=frame.index)
+        if source is None:
+            return pd.Series(np.nan, index=frame.index)
+        if keep_set is not None and source not in keep_set:
+            return pd.Series(np.nan, index=frame.index)
+        return frame[source]
 
     result = pd.DataFrame(index=frame.index)
     result["eq_capital_formation"] = safe_log(column("Private_investment")) + safe_log(column("Public_investment"))
@@ -85,6 +109,73 @@ def equation_features(frame, columns):
     result["eq_business_confidence"] = column("GDP_growth") + safe_log(column("Gov_exp")) + column("Interest_rate") + column("Inflation_rate") + safe_log(column("Exchange_rate_PHP_to_USD")) + safe_log(column("CSPI"))
     result["eq_private_investment"] = safe_log(column("Private_investment")).diff() + column("GDP_growth") + column("Business_confidence")
     return result.replace([np.inf, -np.inf], np.nan)
+
+
+def evaluate_user_equation(expression, frame):
+    expr = (expression or "").strip()
+    if not expr:
+        return None
+
+    if expr.count("=") != 1:
+        raise ValueError("Equation must contain exactly one '=' with the dependent variable on the left and expression on the right.")
+
+    lhs, rhs = [part.strip() for part in expr.split("=", 1)]
+    if not lhs or not rhs:
+        raise ValueError("Equation must have both a dependent variable and a right-hand expression.")
+
+    if not lhs.replace("_", "").isalnum():
+        raise ValueError("Dependent variable name can contain letters, numbers, and underscores only.")
+
+    try:
+        parsed = ast.parse(rhs, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid syntax in equation: {exc.msg}") from exc
+
+    allowed_funcs = {"log": np.log, "sqrt": np.sqrt, "abs": np.abs}
+    allowed_nodes = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Call,
+        ast.Name,
+        ast.Load,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Pow,
+        ast.USub,
+        ast.UAdd,
+        ast.Constant,
+    )
+
+    def validate(node):
+        if not isinstance(node, allowed_nodes):
+            raise ValueError(f"Unsupported expression element: {type(node).__name__}")
+        if isinstance(node, ast.BinOp):
+            validate(node.left)
+            validate(node.right)
+        elif isinstance(node, ast.UnaryOp):
+            validate(node.operand)
+        elif isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name) or node.func.id not in allowed_funcs:
+                raise ValueError("Only log(), sqrt(), and abs() are allowed in custom equations.")
+            for arg in node.args:
+                validate(arg)
+            for keyword in node.keywords:
+                validate(keyword.value)
+        elif isinstance(node, ast.Name):
+            if node.id not in set(frame.columns) | set(allowed_funcs):
+                raise ValueError(f"Unknown variable or function: {node.id}")
+
+    validate(parsed)
+
+    local_context = {name: frame[name] for name in frame.columns}
+    local_context.update(allowed_funcs)
+    result = eval(compile(parsed, "<custom_equation>", "eval"), {"__builtins__": {}}, local_context)
+    output = result if isinstance(result, pd.Series) else pd.Series(result, index=frame.index)
+    output = output.replace([np.inf, -np.inf], np.nan)
+    return lhs, output
 
 
 def metric_values(actual, predicted, training):
@@ -160,29 +251,100 @@ def xgboost_forecast(frame, train, targets, exogenous, equations, steps, future=
     return np.asarray(predictions)
 
 
-def run_method(method, frame, train, targets, exogenous, equations, steps):
+def select_variance_stable_vector_data(frame, targets, equations, columns, threshold=0.95, max_equations=2):
+    selected = list(targets)
+    if not equations:
+        return frame[selected]
+
+    equation_columns = [column for column in equations if column in frame.columns and column not in targets]
+    if not equation_columns:
+        return frame[selected]
+
+    candidate_sources = [source for source in columns.values() if source is not None and source not in targets]
+    filtered_sources = filter_multicollinear_variables(frame, candidate_sources, threshold=threshold)
+    filtered_equations = equation_features(frame, columns, keep_variables=set(filtered_sources))
+    equation_candidates = [column for column in equation_columns if column in filtered_equations.columns and filtered_equations[column].notna().any()]
+
+    if not equation_candidates:
+        return pd.concat([frame[selected], filtered_equations.iloc[:, :1]], axis=1)
+
+    kept = equation_candidates[:max_equations]
+    if not kept:
+        kept = [filtered_equations.columns[0]]
+    return pd.concat([frame[selected], filtered_equations[kept]], axis=1)
+
+
+def run_method(method, frame, train, targets, exogenous, equations, steps, use_equations_in_var_vecm=False, resolved_columns=None):
+    if method in ("VAR", "VECM"):
+        vector_data = train[targets]
+        if use_equations_in_var_vecm and equations:
+            resolved_columns = resolved_columns or {target: target for target in targets}
+            vector_data = select_variance_stable_vector_data(train, targets, equations, resolved_columns)
+        try:
+            if method == "VAR":
+                return var_forecast(vector_data, steps)[:, :len(targets)]
+            return vecm_forecast(vector_data, steps)[:, :len(targets)]
+        except Exception:
+            if use_equations_in_var_vecm and equations:
+                fallback = train[targets]
+                if method == "VAR":
+                    return var_forecast(fallback, steps)[:, :len(targets)]
+                return vecm_forecast(fallback, steps)[:, :len(targets)]
+            raise
+
+    signal_columns = list(targets) + [column for column in equations if column not in targets]
+    feature_set = train[signal_columns] if signal_columns else train[targets]
+
     if method == "ARIMA":
-        return arima_forecast(train[targets], steps)
-    if method == "VAR":
-        return var_forecast(train[targets], steps)
-    if method == "VECM":
-        return vecm_forecast(train[targets], steps)
+        return arima_forecast(feature_set, steps)[:, :len(targets)]
     if method == "GARCH":
-        return garch_forecast(train[targets], steps)
+        return garch_forecast(feature_set, steps)[:, :len(targets)]
     return xgboost_forecast(frame, train[targets], targets, exogenous, equations, steps)
 
 
 st.set_page_config(page_title="Macroeconomic Forecasting Lab", layout="wide")
 
-LOGO_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQijYmtsZ08pz2QlwW-ITX0VwtcKr_OoscYeQhZ8eIcqqHBKMIPNKldBdgG&s=10"
+st.markdown(
+    """
+    <style>
+        div[data-baseweb="tag"],
+        [role="option"][aria-selected="true"],
+        [role="listbox"] [aria-selected="true"],
+        [aria-selected="true"] {
+            background-color: #1ed760 !important;
+            color: #0b0f0d !important;
+            border: 1px solid rgba(30, 215, 96, 0.7) !important;
+        }
+        div[data-baseweb="tag"] span,
+        [role="option"][aria-selected="true"] span,
+        [role="listbox"] [aria-selected="true"] span,
+        [aria-selected="true"] span {
+            color: #0b0f0d !important;
+        }
+        div[data-baseweb="select"] [role="combobox"],
+        div[data-baseweb="select"] {
+            border-color: rgba(30, 215, 96, 0.7) !important;
+            box-shadow: 0 0 0 1px rgba(30, 215, 96, 0.5) !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/1/1c/Philippine_Institute_for_Development_Studies_%28PIDS%29.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original"
 
 
 def render_app_title():
     st.markdown(
         f"""
-        <div style="display: flex; align-items: center; gap: 1rem; margin: 0.5rem 0 1rem;">
-            <h2 style="font-size: 3.5rem; line-height: 1.1; margin: 0;">Macroeconomic Forecasting Lab</h2>
-            <img src="{LOGO_URL}" alt="App logo" style="width: 180px; height: 180px; object-fit: contain;">
+        <div style="display: flex; align-items: center; gap: 1.5rem; margin: 0.5rem 0 1rem; width: 100%;">
+            <div style="display: flex; flex-direction: column; justify-content: center; min-width: 0; flex: 3; padding-right: 0.5 rem;">
+                <div style="font-size: 4.2rem; line-height: 0.9; font-weight: 800; margin: 0; letter-spacing: -0.06em;">Macroeconomic</div>
+                <div style="font-size: 4.2rem; line-height: 0.9; font-weight: 800; margin: 0; letter-spacing: -0.06em;">Forecasting Lab</div>
+            </div>
+            <div style="flex: 1; display: flex; justify-content: flex-end; align-items: center;">
+                <img src="{LOGO_URL}" alt="App logo" style="width: 170px; height: 170px; object-fit: contain;">
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -225,20 +387,33 @@ with st.sidebar:
         forecast_outputs = st.multiselect(
             "Forecast outputs",
             FORECAST_VARIABLES,
-            default=list(OUTPUTS.keys()),
+            default=[],
         )
         forecast_inputs = st.multiselect(
             "Forecast inputs",
             FORECAST_VARIABLES,
-            default=FORECAST_VARIABLES,
+            default=[],
         )
+        st.caption("Example: GDP_growth = Inflation_rate + Employment_rate. Use one dependent variable on the left and allowed math on the right.")
+        custom_equations = [
+            st.text_input(f"Custom equation {index}", value="", placeholder="e.g. GDP_growth = Inflation_rate + Employment_rate")
+            for index in range(1, 4)
+        ]
         selected_methods = st.multiselect(
             "Methods to compare",
             ["ARIMA", "VAR", "VECM", "GARCH", "XGBoost"],
-            default=["ARIMA", "VAR", "VECM"],
+            default=[],
         )
+        use_equations_in_var_vecm = True
         forecast_horizon = st.number_input("Forecast horizon (years)", min_value=5, max_value=5, value=5, step=1)
-        test_fraction = st.slider("Backtest share", 0.1, 0.4, 0.2, 0.05)
+        st.markdown(
+            "<div style='display:flex; align-items:center; gap:0.5rem; margin-top:0.25rem;'>"
+            "<span style='font-size:1.1rem; font-weight:700;'>Backtest share</span>"
+            "<span title='Share of the dataset used for backtesting; the rest is used for training. Example: 0.20 means 20% held out for validation.' style='display:inline-flex; align-items:center; justify-content:center; width:1.2rem; height:1.2rem; border-radius:50%; background:#2d7df6; color:white; font-size:0.8rem; font-weight:700; cursor:help;'>?</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        test_fraction = st.slider("", 0.1, 0.4, 0.2, 0.05, label_visibility="collapsed")
         run_comparison = st.form_submit_button("Run comparison", type="primary", use_container_width=True)
 
 resolved = resolve_columns(raw)
@@ -251,15 +426,15 @@ date_column = "Year" if "Year" in raw.columns else raw.columns[0]
 data = clean_data(raw, date_column)
 preview_data = clean_data(raw, date_column, fill_missing=False)
 input_columns = [column for column in preview_data.columns]
-preview = preview_data.loc[preview_data.index.year.isin([2025, 2026, 2027]), input_columns].copy()
+preview = preview_data.loc[preview_data.index.year.isin([2024, 2025, 2026, 2027]), input_columns].copy()
 preview.index = preview.index.year
 preview.index.name = "Year"
 if preview.empty:
-    st.error("The CSV must contain rows for 2025, 2026, and 2027.")
+    st.error("The CSV must contain rows for 2024, 2025, 2026, and 2027.")
     st.stop()
 
 st.header("Editable input and output data preview")
-st.caption("Edit any of the 16 non-date variables for 2025-2027. Year is shown only as the row index.")
+st.caption("Edit any of the 16 non-date variables for 2024-2027. Year is shown only as the row index.")
 edited_preview = st.data_editor(preview, num_rows="fixed", use_container_width=True, key="input_preview")
 for year in edited_preview.index:
     row_mask = data.index.year == int(year)
@@ -268,7 +443,7 @@ for year in edited_preview.index:
         if pd.notna(value):
             data.loc[row_mask, column] = value
 
-if not run_comparison:
+if not run_comparison and "backtest_results" not in st.session_state:
     st.info("Choose your forecast settings, then click Run comparison in the sidebar.")
     st.stop()
 
@@ -277,6 +452,16 @@ if not forecast_outputs or not forecast_inputs or not selected_methods:
     st.stop()
 
 equations = equation_features(data, resolved)
+for index, expression in enumerate(custom_equations, start=1):
+    if not expression or not expression.strip():
+        continue
+    try:
+        lhs, rhs_result = evaluate_user_equation(expression, data)
+        equation_name = f"eq_custom_{index}_{lhs}"
+        equations[equation_name] = rhs_result
+    except ValueError as exc:
+        st.warning(f"Custom equation {index} is invalid: {exc}")
+
 model_frame = pd.concat([data, equations], axis=1)
 targets = [resolved[name] for name in forecast_outputs]
 target_labels = forecast_outputs
@@ -291,20 +476,33 @@ if len(model_frame) < 30:
 
 split = max(15, int(len(model_frame) * (1 - test_fraction)))
 train, test = model_frame.iloc[:split], model_frame.iloc[split:]
-predictions, errors = {}, {}
-with st.spinner("Fitting models and running the backtest..."):
-    for method in selected_methods:
-        try:
-            predictions[method] = run_method(method, model_frame, train, targets, exogenous, equation_columns, len(test))
-            errors[method] = pd.DataFrame([metric_values(test[target], predictions[method][:, position], train[target]) for position, target in enumerate(targets)], index=target_labels)
-        except Exception as error:
-            st.warning(f"{method} could not be fitted: {error}")
+
+if run_comparison or "backtest_results" not in st.session_state:
+    predictions, errors = {}, {}
+    with st.spinner("Fitting models and running the backtest..."):
+        for method in selected_methods:
+            try:
+                predictions[method] = run_method(method, model_frame, train, targets, exogenous, equation_columns, len(test), use_equations_in_var_vecm=use_equations_in_var_vecm, resolved_columns=resolved)
+                errors[method] = pd.DataFrame([metric_values(test[target], predictions[method][:, position], train[target]) for position, target in enumerate(targets)], index=target_labels)
+            except Exception as error:
+                st.warning(f"{method} could not be fitted: {error}")
+    if not errors:
+        st.stop()
+    st.session_state["backtest_results"] = {
+        "predictions": predictions,
+        "errors": errors,
+        "target_labels": target_labels,
+    }
+else:
+    predictions = st.session_state["backtest_results"]["predictions"]
+    errors = st.session_state["backtest_results"]["errors"]
+    target_labels = st.session_state["backtest_results"]["target_labels"]
 
 if not errors:
     st.stop()
 
 st.header("Backtest results")
-metric_name = st.selectbox("Metric to rank", ["RMSE", "MAE", "MAPE", "MASE"])
+metric_name = st.selectbox("Metric to rank", ["RMSE", "MAE", "MAPE", "MASE"], index=0)
 ranking = pd.DataFrame({method: result[metric_name] for method, result in errors.items()}, index=target_labels)
 st.dataframe(ranking.style.format("{:.4f}"), use_container_width=True)
 best = pd.DataFrame(index=target_labels)
@@ -323,7 +521,7 @@ forecast_frame = pd.concat([model_frame, future_frame])
 future_predictions = {}
 for method in predictions:
     try:
-        future_predictions[method] = run_method(method, forecast_frame, model_frame, targets, exogenous, equation_columns, len(forecast_years))
+        future_predictions[method] = run_method(method, forecast_frame, model_frame, targets, exogenous, equation_columns, len(forecast_years), use_equations_in_var_vecm=use_equations_in_var_vecm, resolved_columns=resolved)
     except Exception as error:
         st.warning(f"{method} future forecast failed: {error}")
 

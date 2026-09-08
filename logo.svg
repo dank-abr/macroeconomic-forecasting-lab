@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="PIDS logo">
+  <rect width="1200" height="700" fill="#000000"/>
+  <g transform="translate(0,0)">
+    <polygon points="500,0 1080,0 1080,180 940,180 940,60 640,60 640,180 500,180" fill="#c45d1c"/>
+    <path d="M720 130 L920 130 L920 0 L1200 0 L1200 130 L1035 130 L1035 700 L720 700 Z" fill="#c45d1c" opacity="0.25"/>
+    <g fill="#c45d1c" font-family="Arial Black, Impact, sans-serif" font-weight="900" letter-spacing="-18">
+      <text x="80" y="470" font-size="520">P</text>
+      <text x="360" y="470" font-size="520">I</text>
+      <text x="470" y="470" font-size="520">D</text>
+      <text x="760" y="470" font-size="520">S</text>
+    </g>
+    <polygon points="675,0 960,0 960,130 710,130 710,260 675,260" fill="#c45d1c"/>
+    <polygon points="960,0 1188,0 1188,130 960,130" fill="#c45d1c"/>
+    <polygon points="960,0 1200,0 1200,70 960,70" fill="#c45d1c"/>
+  </g>
+</svg>
