@@ -1,0 +1,17 @@
+﻿Variables,Definition,Unit,Coverage years,Source,Link (if applicable)
+Capital_formation,Capital stock (Total assets used to produce goods and services) ,USD Million (at constant 2017 national prices),1950 – 2023,CEIC,University of Groningen and University of California (as complied by CEIC)*
+Labor_productivity,Labor productivity growth,Percent (YoY),1992 - 2025,CEIC,CEIC
+GDP_growth,Year-on-Year change in the total output of the country in macroscale,At constant 2018 prices (Percent),1947 – 2025,PSA,CEIC (PSA) – Annual GDP Series https://openstat.psa.gov.ph/PXWeb/pxweb/en/DB/DB__2B__NA__AN__23ANAP/?tablelist=true
+Business_confidence,Business Expectation Survey conducted by BSP ,Percent,2001 - 2025,BSP,https://www.bsp.gov.ph/SitePages/MediaAndResearch/Business%20Expectations%20Report.aspx
+Private_investment,"Gross Fixed Capital Formation, household and Non-Profit Institutions Serving Household sector",At constant 2018 prices (Php Million),2000 – 2025 ,PSA (CEIC),CEIC
+Public_investment,"Gross Fixed Capital Formation, public sector",At constant 2018 prices (Php Million),1946 – 2025 ,PSA (CEIC),CEIC
+GFCF,Total GFCF,At constant 2018 prices (Php Million),2000 – 2025 ,PSA (CEIC),CEIC
+Employment_rate,Percent of employed persons in the Philippines over total adult working population,Percent,1956 - 2025,BSP,https://www.bsp.gov.ph/SitePages/Statistics/OtherRealSectorAccounts.aspx?TabId=6 
+HCI,Human capital index,Rate,1950 – 2023,CEIC,University of Groningen and University of California (as complied by CEIC)*
+Real_wage,"Daily Minimum Wage Rate, Non-Agriculture, NCR",Pesos (End-of-the-Year),1989 - 2026,National Wages and Productivity Commission (NWPC),https://nwpc.dole.gov.ph/summary-of-daily-minimum-wage-rates-per-wage-order-by-region-non-agriculture-1989-present/ 
+Inflation_rate,Annual All items average inflation rate,At constant 2018 prices (Php Million),1958 – 2025,BSP,https://www.bsp.gov.ph/SitePages/Statistics/Prices.aspx?TabId=1 
+GNI,Gross National Income per capita,At constant 2018 prices (Php Million),1981 – 2025 ,PSA (CEIC),CEIC
+Gov_exp,Government Final Consumption Expenditure,At constant 2018 Prices (Php Million),1981 - 2025,PSA,PSA (2026) (as compiled by CEIC)
+Interest_rate,Consumer lending domestic nominal rate,Percent,1976 – 2025 ,CEIC,CEIC
+Exchange_rate,Real Effective Exchange Rate,Index (1980=100),1980 – 2025 ,BSP (CEIC),CEIC
+Composite Stock Price Index,Market capitalization of PSEi (Equity market index),Index points (Annual average),1987 – 2025 ,PSE (CEIC),CEIC

@@ -375,6 +375,7 @@ render_app_title()
 st.caption("Equation-informed comparison of ARIMA, VECM, VAR, GARCH and XGBoost")
 
 csv_path = Path(__file__).with_name("R1_model.csv")
+metadata_path = Path(__file__).with_name("Metadata.csv")
 if not csv_path.exists():
     st.error(f"Required input file not found: {csv_path.name}")
     st.stop()
@@ -382,6 +383,23 @@ if not csv_path.exists():
 raw = pd.read_csv(csv_path)
 with st.sidebar:
     st.header("Forecast settings")
+    st.download_button(
+        "Download historical data",
+        data=csv_path.read_bytes(),
+        file_name=csv_path.name,
+        mime="text/csv",
+        use_container_width=True,
+    )
+    if metadata_path.exists():
+        st.download_button(
+            "Download metadata",
+            data=metadata_path.read_bytes(),
+            file_name=metadata_path.name,
+            mime="text/csv",
+            use_container_width=True,
+        )
+    else:
+        st.error(f"Metadata file not found: {metadata_path.name}")
     with st.form("forecast_settings"):
         st.caption("Choose variables, methods, and horizon, then submit the settings.")
         forecast_outputs = st.multiselect(
@@ -394,11 +412,34 @@ with st.sidebar:
             FORECAST_VARIABLES,
             default=[],
         )
+        st.markdown(
+            "<div style='display:flex; align-items:center; gap:0.5rem;'>"
+            "<span>Custom equation (optional)</span>"
+            "<span title='Optional: add a custom equation only if you want to include one in the forecast models.' style='display:inline-flex; align-items:center; justify-content:center; width:1.2rem; height:1.2rem; border-radius:50%; background:#2d7df6; color:white; font-size:0.8rem; font-weight:700; cursor:help;'>?</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
         st.caption("Example: GDP_growth = Inflation_rate + Employment_rate. Use one dependent variable on the left and allowed math on the right.")
+        max_custom_equations = 10
+        if "custom_equation_count" not in st.session_state:
+            st.session_state["custom_equation_count"] = 1
+        st.session_state["custom_equation_count"] = min(
+            st.session_state["custom_equation_count"], max_custom_equations
+        )
         custom_equations = [
-            st.text_input(f"Custom equation {index}", value="", placeholder="e.g. GDP_growth = Inflation_rate + Employment_rate")
-            for index in range(1, 4)
+            st.text_input(
+                f"Custom equation {index}",
+                value="",
+                placeholder="e.g. GDP_growth = Inflation_rate + Employment_rate",
+                key=f"custom_equation_{index}",
+            )
+            for index in range(1, st.session_state["custom_equation_count"] + 1)
         ]
+        if st.session_state["custom_equation_count"] < max_custom_equations:
+            add_equation = st.form_submit_button("Add equation", use_container_width=True)
+        else:
+            add_equation = False
+            st.caption("Maximum of 10 custom equations reached.")
         selected_methods = st.multiselect(
             "Methods to compare",
             ["ARIMA", "VAR", "VECM", "GARCH", "XGBoost"],
@@ -415,6 +456,12 @@ with st.sidebar:
         )
         test_fraction = st.slider("", 0.1, 0.4, 0.2, 0.05, label_visibility="collapsed")
         run_comparison = st.form_submit_button("Run comparison", type="primary", use_container_width=True)
+
+if add_equation:
+    st.session_state["custom_equation_count"] = min(
+        st.session_state["custom_equation_count"] + 1, max_custom_equations
+    )
+    st.rerun()
 
 resolved = resolve_columns(raw)
 missing = [name for name, source in resolved.items() if source is None]
